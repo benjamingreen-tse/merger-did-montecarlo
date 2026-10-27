@@ -6,7 +6,7 @@ Personal R project to learn Monte Carlo simulation. It asks, on simulated market
 
 This is an exploratory learning project, not a pre-registered study. Two scripts (`02`, `03`) carry a prediction written before running; the main grid does not, because I had no specific expectations.
 
-**Status: complete.** The note is in `report/note.qmd` (rendered: `report/note.html`); it reads its results from the simulation output.
+**Status: complete.** The note is in `report/note.qmd` ([read it rendered](https://benjamingreen-tse.github.io/merger-did-montecarlo/report/note.html)); it reads its results from the simulation output.
 
 ## Structure
 | File | Content |
