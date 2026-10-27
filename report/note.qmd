@@ -1,0 +1,135 @@
+---
+title: "Staggered merger retrospectives: TWFE against a robust estimator, on simulated data"
+author: "Benjamin Green"
+date: today
+format:
+  html:
+    embed-resources: true
+    toc: false
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+**Simulated data, illustration only.** Nothing below is a fact about a real merger. The results are about methods.
+
+```{r setup}
+source(here::here("R", "00_setup.R"))
+perf  <- read_csv(here("output", "tables", "performance.csv"), show_col_types = FALSE)
+draws <- readRDS(here("output", "tables", "sim_draws.rds"))
+ref_n   <- max(grid_n_markets)
+ref_rho <- rho_u
+n_scen   <- n_distinct(perf$scenario)
+n_panels <- nrow(distinct(draws, scenario, rep))
+n_fail   <- sum(perf$n_fail)
+fig <- function(f) knitr::include_graphics(here("output", "figures", f))
+# One value of the performance table: effects scenario, estimator, column
+pick <- function(eff, est, col, n = ref_n, rho = ref_rho) {
+  x <- perf |> filter(effects == eff, estimator == est, n_markets == n, rho_u == rho)
+  x[[col]]
+}
+```
+
+## 1. Question
+
+Merger retrospectives compare markets where a merger happened with markets where it did not, before and after, and the mergers happen at different dates. When the effect differs across merger dates, does the usual two-way fixed effects (TWFE) regression still recover the average effect on the treated markets, and are its confidence intervals reliable? How does the Callaway and Sant'Anna estimator do on the same data?
+
+This is an exploratory learning project, not a pre-registered study.
+
+## 2. Design
+
+The structure follows the ADEMP framework of Morris, White and Crowther (2019).
+
+| | |
+|---|---|
+| **Aims** | Compare TWFE and Callaway-Sant'Anna for the average effect of staggered mergers, and check their standard errors. |
+| **Data-generating mechanism** | $y_{it} = \alpha_i + \lambda_t + \tau_{it} + u_{it}$ for `r paste(grid_n_markets, collapse = " or ")` markets over `r n_periods` periods. Mergers happen in periods `r paste(cohorts, collapse = ", ")`, each for `r 100 * cohort_p[1]`% of markets; the rest are never treated. Dates are drawn independently of $\alpha_i$, so parallel trends hold by construction. $u_{it}$ is a stationary AR(1). |
+| **Scenarios** | `r n_scen` scenarios: effects (heterogeneous `r paste(tau_scenarios$heterogeneous, collapse = "/")`, homogeneous `r paste(tau_scenarios$homogeneous, collapse = "/")`, null) $\times$ number of markets (`r paste(grid_n_markets, collapse = ", ")`) $\times$ AR(1) persistence (`r paste(grid_rho_u, collapse = ", ")`). `r n_reps_grid` replications each. |
+| **Estimand** | The average of $\tau_{it}$ over the treated market-periods of each simulated panel. |
+| **Methods** | TWFE (`fixest::feols`) with classical and market-clustered standard errors; Callaway-Sant'Anna (`did`), never-treated controls, "simple" aggregation, analytic standard errors. |
+| **Performance** | Bias, empirical standard deviation, RMSE, coverage of the 95% interval, rejection rate of $ATT = 0$, each with its Monte Carlo error. |
+
+## 3. Expectations
+
+None were recorded. This was an exploration of methods I was not yet comfortable with, and I had no specific expectations before running the grid, so the results are read as they come, with Goodman-Bacon (2021) and Callaway and Sant'Anna (2021) as background and not as a test of predictions. The toy scripts `02_toy_omitted.R` and `03_dgp_panel.R` do carry a prediction written before running.
+
+## 4. Results
+
+`r n_panels` panels were simulated; the Callaway-Sant'Anna estimator failed on `r n_fail` of them (those rows are excluded from its measures).
+
+### Error distribution
+
+```{r}
+fig("error_distribution.png")
+```
+
+### How the error distribution builds up
+
+```{r}
+fig("accumulation.gif")
+```
+
+Each frame adds replications. The dashed line is the truth; the black line is the running mean error of the replications so far, which is the bias estimate and its Monte Carlo noise.
+
+### Bias
+
+```{r}
+fig("bias.png")
+```
+
+### Coverage of the 95% interval
+
+```{r}
+fig("coverage.png")
+```
+
+### Numbers for the reference scenario (`r ref_n` markets, AR(1) persistence `r ref_rho`)
+
+```{r}
+perf |>
+  filter(n_markets == ref_n, rho_u == ref_rho) |>
+  select(effects, estimator, bias, mcse_bias, emp_sd, mean_se, rmse,
+         coverage, mcse_cov, reject_zero) |>
+  knitr::kable(digits = 3)
+```
+
+`mean_se` is the average reported standard error; compare it with `emp_sd`, the true spread of the estimates. `reject_zero` is the size of the test under the null scenario and a power under the others.
+
+### Reading
+
+This reads the run with seed `r seed` and `r n_reps_grid` replications per scenario; the numbers are pulled from the output, but the sentences describe this particular run.
+
+**Bias.** With heterogeneous effects TWFE underestimates the average effect: in the reference scenario its bias is `r round(pick("heterogeneous", "twfe_cluster", "bias"), 2)` (Monte Carlo error `r round(pick("heterogeneous", "twfe_cluster", "mcse_bias"), 3)`), against `r round(pick("heterogeneous", "cs", "bias"), 2)` for Callaway-Sant'Anna. In every scenario the bias of Callaway-Sant'Anna stays within about two Monte Carlo errors of zero. With homogeneous or null effects neither estimator shows a detectable bias.
+
+**Error.** Under heterogeneity TWFE has the smaller spread of estimates (`r round(pick("heterogeneous", "twfe_cluster", "emp_sd"), 2)` against `r round(pick("heterogeneous", "cs", "emp_sd"), 2)`) but the larger RMSE (`r round(pick("heterogeneous", "twfe_cluster", "rmse"), 2)` against `r round(pick("heterogeneous", "cs", "rmse"), 2)`), because its bias dominates. Under homogeneity the ranking reverses: TWFE is the more precise estimator (RMSE `r round(pick("homogeneous", "twfe_cluster", "rmse"), 2)` against `r round(pick("homogeneous", "cs", "rmse"), 2)`), so Callaway-Sant'Anna pays for its robustness with a larger variance.
+
+**Standard errors.** The classical standard error ignores the AR(1) persistence. In the reference scenario its average is `r round(pick("homogeneous", "twfe_iid", "mean_se"), 2)` while the estimates actually spread by `r round(pick("homogeneous", "twfe_iid", "emp_sd"), 2)` (homogeneous effects), and under the null it rejects $ATT = 0$ in `r round(100 * pick("null", "twfe_iid", "reject_zero"))`% of the panels instead of 5%. The market-clustered standard error follows the spread of the estimates, with a null rejection rate of `r round(100 * pick("null", "twfe_cluster", "reject_zero"))`%. With independent errors (`rho_u` = 0) the two are alike.
+
+**Coverage.** Under heterogeneity the TWFE interval covers far below 95%: `r pick("heterogeneous", "twfe_cluster", "coverage", n = min(grid_n_markets), rho = 0)` with `r min(grid_n_markets)` markets and `r pick("heterogeneous", "twfe_cluster", "coverage", rho = 0)` with `r max(grid_n_markets)` (independent errors). More markets make it worse, because the bias stays while the sampling variance falls.
+
+**Not explained.** Callaway-Sant'Anna covers more than 95% under heterogeneity (`r pick("heterogeneous", "cs", "coverage")` in the reference scenario, Monte Carlo error `r round(pick("heterogeneous", "cs", "mcse_cov"), 3)`), although its average standard error (`r round(pick("heterogeneous", "cs", "mean_se"), 3)`) is close to the spread of its estimates (`r round(pick("heterogeneous", "cs", "emp_sd"), 3)`). One possible reason is that the truth is defined per panel and varies with the realised cohort sizes (see the limits), but I have not checked it.
+
+## 5. Limits
+
+- **One family of data-generating mechanisms.** Everything holds for this DGP and these parameter values; the grid is a handful of points, not a map of all designs.
+- **Parallel trends hold by construction** and merger dates are random. In real retrospectives, merger timing is chosen (firms merge in markets with particular demand or cost trends), so the identification problem is harder than anything simulated here.
+- **No anticipation, no spillovers.** Control markets are not affected by mergers elsewhere; real controls often are.
+- **Constant effect within a cohort.** Effects that grow or fade after the merger are not simulated, and they are another reason for TWFE to fail.
+- **Favourable control group.** 40% of markets are never treated, which suits Callaway-Sant'Anna; with few or no never-treated markets the comparison would differ.
+- **Clean panel.** Balanced, no missing data, Gaussian errors, markets of equal weight.
+- **Truth defined per panel.** The estimand is the realised average of $\tau_{it}$ on treated cells, which is what both estimators target here; a different estimand (for example weighting markets by size) would change the verdict.
+- **Finite precision.** With `r n_reps_grid` replications, a coverage rate has a Monte Carlo error of about one percentage point; differences smaller than the bars on the figures should not be interpreted.
+- **Normal critical value.** Intervals use 1.96, with no small-sample correction.
+- **Nothing here is about real mergers.** The results concern the behaviour of estimators on simulated data.
+
+## 6. Reproduce
+
+`R/00_setup.R` holds every parameter and `R/05_engine.R` runs the grid with a fixed seed. The README lists the order of the scripts.
+
+## References
+
+- Callaway, B. and Sant'Anna, P. H. C. (2021). Difference-in-differences with multiple time periods. *Journal of Econometrics*.
+- Goodman-Bacon, A. (2021). Difference-in-differences with variation in treatment timing. *Journal of Econometrics*.
+- Kiviet, J. F. (2012). *Monte Carlo Simulation for Econometricians*.
+- Morris, T. P., White, I. R. and Crowther, M. J. (2019). Using simulation studies to evaluate statistical methods. *Statistics in Medicine*.
